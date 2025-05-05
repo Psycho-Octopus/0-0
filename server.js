@@ -3,28 +3,217 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
-const path = require('path');
-
-app.use(express.static(path.join(__dirname, 'public')));
 
 // In-memory rate limiter and message history
 const messageRateLimits = new Map();
 const messageHistory = [];
 
+// Serve the custom HTML UI
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Channel 0-0</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Arial', sans-serif;
+      background-color: #f4f7fa;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      justify-content: space-between;
+    }
+    header {
+      background-color: #a5a5a5;
+      color: #fff;
+      padding: 15px 30px;
+      font-size: 24px;
+      text-align: center;
+      font-weight: bold;
+    }
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      background-color: #fff;
+    }
+    .message {
+      padding: 12px 16px;
+      border-bottom: 1px solid #000;
+      background-color: #ffffff;
+      word-wrap: break-word;
+    }
+    .timestamp {
+      font-size: 0.8em;
+      color: #888;
+      margin-top: 6px;
+    }
+    img {
+      max-width: 100%;
+      border-radius: 5px;
+      margin-top: 8px;
+    }
+    form {
+      padding: 15px;
+      background-color: #fff;
+      border-top: 1px solid #ddd;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      bottom: 0;
+      gap: 10px;
+    }
+    .left-controls {
+      display: flex;
+      flex: 1;
+      gap: 10px;
+      align-items: center;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    input[type="file"] {
+      padding: 6px;
+      flex-shrink: 0;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    @media (max-width: 768px) {
+      form {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .left-controls, input[type="file"] {
+        width: 100%;
+      }
+      .left-controls {
+        flex-direction: column;
+      }
+      button, input[type="text"] {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>0-0</header>
+  <div id="chat"></div>
+  <form id="messageForm">
+    <div class="left-controls">
+      <input type="text" id="textInput" placeholder="Text here..." />
+      <button type="submit">Send⬆️</button>
+    </div>
+    <input type="file" id="imageInput" accept="image/*" />
+  </form>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('messageForm');
+    const textInput = document.getElementById('textInput');
+    const imageInput = document.getElementById('imageInput');
+
+    function getTimestamp() {
+      const now = new Date();
+      return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function appendMessage(data) {
+      const msg = document.createElement('div');
+      msg.className = 'message';
+
+      const text = document.createElement('p');
+      text.textContent = data.text || '';
+      msg.appendChild(text);
+
+      const timestamp = document.createElement('span');
+      timestamp.className = 'timestamp';
+      timestamp.textContent = data.timestamp;
+      msg.appendChild(timestamp);
+
+      if (data.image) {
+        const img = document.createElement('img');
+        img.src = data.image;
+        msg.appendChild(img);
+      }
+
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const message = textInput.value.trim();
+      const file = imageInput.files[0];
+      const timestamp = getTimestamp();
+
+      if (!message && !file) return;
+
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          socket.emit('chat message', { text: message, image: reader.result, timestamp });
+        };
+        reader.readAsDataURL(file);
+      } else {
+        socket.emit('chat message', { text: message, timestamp });
+      }
+
+      textInput.value = '';
+      imageInput.value = '';
+    });
+
+    socket.on('chat message', appendMessage);
+
+    socket.on('chat history', (history) => {
+      history.forEach(appendMessage);
+    });
+
+    socket.on('rate limit', (message) => {
+      const warning = document.createElement('div');
+      warning.className = 'message';
+      warning.style.color = 'red';
+      warning.style.border = '1px solid red';
+      warning.style.backgroundColor = '#ffe5e5';
+      warning.textContent = message;
+      chat.appendChild(warning);
+      chat.scrollTop = chat.scrollHeight;
+    });
+  </script>
+</body>
+</html>`);
+});
+
+// Socket.io logic
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
-
-  // Send recent message history to the newly connected user
   socket.emit('chat history', messageHistory);
-
-  // Initialize rate limit tracking
   messageRateLimits.set(socket.id, []);
 
   socket.on('chat message', (msg) => {
     const now = Date.now();
     const timestamps = messageRateLimits.get(socket.id) || [];
-
-    // Filter to only messages within the last 10 seconds
     const recentTimestamps = timestamps.filter(ts => now - ts < 10000);
 
     if (recentTimestamps.length >= 5) {
@@ -32,17 +221,14 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Store the timestamp
+    if (typeof msg !== 'object' || (!msg.text && !msg.image)) return;
+
     recentTimestamps.push(now);
     messageRateLimits.set(socket.id, recentTimestamps);
 
-    // Store the message in history (max 10)
     messageHistory.push(msg);
-    if (messageHistory.length > 10) {
-      messageHistory.shift();
-    }
+    if (messageHistory.length > 10) messageHistory.shift();
 
-    // Broadcast the message
     io.emit('chat message', msg);
   });
 
@@ -52,6 +238,7 @@ io.on('connection', (socket) => {
   });
 });
 
+// Start server
 http.listen(3000, () => {
   console.log('Hosting on http://localhost:3000');
 });
