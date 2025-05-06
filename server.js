@@ -25,7 +25,7 @@ io.on('connection', (socket) => {
     const userRateLimit = messageRateLimits.get(socket.id);
 
     // Check if 60 seconds have passed since the last message
-    if (now - userRateLimit.lastMessageTime < 60000) {
+    if (now - userRateLimit.lastMessageTime < 10000) {
       socket.emit('rate limit', 'You can only send 1 message per minute.');
       return;
     }
