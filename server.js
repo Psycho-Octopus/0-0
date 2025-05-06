@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
@@ -8,7 +9,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // In-memory rate limiter and message history
 const messageRateLimits = new Map();
-const messageHistory = [];
+const messageHistory = [];  // <-- Corrected line here
 
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
@@ -17,23 +18,20 @@ io.on('connection', (socket) => {
   socket.emit('chat history', messageHistory);
 
   // Initialize rate limit tracking for each user
-  messageRateLimits.set(socket.id, { timestamps: [] });
+  messageRateLimits.set(socket.id, { lastMessageTime: 0 });
 
   socket.on('chat message', (msg) => {
     const now = Date.now();
     const userRateLimit = messageRateLimits.get(socket.id);
 
-    // Filter out timestamps older than 10 seconds
-    userRateLimit.timestamps = userRateLimit.timestamps.filter(ts => now - ts < 10000);
-
-    // Check if the user has sent more than 5 messages in the last 10 seconds
-    if (userRateLimit.timestamps.length >= 5) {
-      socket.emit('rate limit', 'You are sending messages too fast. Please wait a bit.');
+    // Check if 60 seconds have passed since the last message
+    if (now - userRateLimit.lastMessageTime < 60000) {
+      socket.emit('rate limit', 'You can only send 1 message per minute.');
       return;
     }
 
-    // Add the current timestamp for this message
-    userRateLimit.timestamps.push(now);
+    // Store the timestamp of this message
+    userRateLimit.lastMessageTime = now;
     messageRateLimits.set(socket.id, userRateLimit);
 
     // Store the message in history (max 10 messages)
