@@ -29,7 +29,7 @@ io.on('connection', (socket) => {
     const recentTimestamps = timestamps.filter(ts => now - ts < 10000);
 
     if (recentTimestamps.length >= 5) {
-      socket.emit('rate limit', 'You are sending messages too fast. Please slow down.');
+      socket.emit('rate limit', 'You are sending messages too fast. Stop spamming.');
       return;
     }
 
