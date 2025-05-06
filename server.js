@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
@@ -9,54 +8,48 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // In-memory rate limiter and message history
 const messageRateLimits = new Map();
-const messageHistory = \[];
+const messageHistory = [];
 
 io.on('connection', (socket) => {
-console.log('A user connected:', socket.id);
+  console.log('A user connected:', socket.id);
 
-// Send recent message history to the newly connected user
-socket.emit('chat history', messageHistory);
+  // Send recent message history to the newly connected user
+  socket.emit('chat history', messageHistory);
 
-// Initialize rate limit tracking
-messageRateLimits.set(socket.id, \[]);
+  // Initialize rate limit tracking for each user
+  messageRateLimits.set(socket.id, { lastMessageTime: 0 });
 
-socket.on('chat message', (msg) => {
-const now = Date.now();
-const timestamps = messageRateLimits.get(socket.id) || \[];
+  socket.on('chat message', (msg) => {
+    const now = Date.now();
+    const userRateLimit = messageRateLimits.get(socket.id);
 
-```
-// Filter to only messages within the last 10 seconds
-const recentTimestamps = timestamps.filter(ts => now - ts < 10000);
+    // Check if 60 seconds have passed since the last message
+    if (now - userRateLimit.lastMessageTime < 60000) {
+      socket.emit('rate limit', 'You can only post once per minute.');
+      return;
+    }
 
-if (recentTimestamps.length >= 5) {
-  socket.emit('rate limit', 'You are sending messages too fast. Please slow down.');
-  return;
-}
+    // Store the timestamp of this message
+    userRateLimit.lastMessageTime = now;
+    messageRateLimits.set(socket.id, userRateLimit);
 
-// Store the timestamp
-recentTimestamps.push(now);
-messageRateLimits.set(socket.id, recentTimestamps);
+    // Store the message in history (max 10 messages)
+    messageHistory.push(msg);
+    if (messageHistory.length > 10) {
+      messageHistory.shift(); // Remove the oldest message if more than 10
+    }
 
-// Store the message in history (max 10)
-messageHistory.push(msg);
-if (messageHistory.length > 10) {
-  messageHistory.shift();
-}
+    // Broadcast the message to all users
+    io.emit('chat message', msg);
+  });
 
-// Broadcast the message
-io.emit('chat message', msg);
-```
-
-});
-
-socket.on('disconnect', () => {
-console.log('User disconnected:', socket.id);
-messageRateLimits.delete(socket.id);
-});
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    messageRateLimits.delete(socket.id); // Remove user from the rate-limiting map
+  });
 });
 
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, () => {
   console.log(`Hosting on http://localhost:${PORT}`);
 });
-
