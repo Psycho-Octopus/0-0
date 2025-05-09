@@ -4,77 +4,80 @@ require 'faye/websocket'
 require 'json'
 require 'thread'
 require 'set'
-
-data = {
-  name: "my_project",
-  version: "1.0.0",
-  description: "This is a sample JSON config",
-  dependencies: {
-    "sinatra" => "~> 2.1"
-  }
-}
-
-File.open("project.json", "w") do |f|
-  f.write(JSON.pretty_generate(data))
-end
+require 'securerandom'
 
 set :public_folder, File.dirname(__FILE__) + '/public'
-connections = []
-message_history = []
-rate_limits = {}
 
+# List of boards, add or remove board names from this array as needed
+BOARDS = ['all', 'chat', 'memes', 'news']
+
+# Structure: { board_name => { connections: [], history: [], rate_limits: {} } }
+boards = Hash.new { |h, k| h[k] = { connections: [], history: [], rate_limits: {} } }
 mutex = Mutex.new
 
-# Serve the index.html directly
+# Read banned words from bannedWords.txt into an array
+banned_words = File.read('bannedWords.txt').split("\n").map(&:strip)
+
+# Default redirect to the first board (e.g., /b)
 get '/' do
-  send_file File.join(settings.public_folder, 'index.html')
+  redirect "/#{BOARDS.first}"
 end
 
-# WebSocket endpoint
-get '/ws' do
-  if Faye::WebSocket.websocket?(env)
+# Serve index.html for any board path (e.g., /b, /soy, /a)
+get '/:board' do |board|
+  if BOARDS.include?(board)
+    send_file File.join(settings.public_folder, 'index.html')
+  else
+    halt 404, "Board not found"
+  end
+end
+
+# WebSocket endpoint for a specific board
+get '/ws/:board' do |board|
+  if BOARDS.include?(board) && Faye::WebSocket.websocket?(env)
     ws = Faye::WebSocket.new(env)
     client_id = SecureRandom.hex(8)
 
     mutex.synchronize do
-      connections << ws
-      rate_limits[client_id] = []
+      boards[board][:connections] << ws
+      boards[board][:rate_limits][client_id] = []
     end
 
-    # Send message history on connect
     ws.on :open do |_|
-      ws.send(message_history.to_json)
+      ws.send(boards[board][:history].to_json)
     end
 
     ws.on :message do |event|
       begin
         data = JSON.parse(event.data)
         timestamp = Time.now.to_i
-        messages = rate_limits[client_id].select { |t| timestamp - t < 10 }
 
-        if messages.size >= 5
-          ws.send({ text: 'You are sending messages too fast. Stop spamming.', type: 'rate_limit' }.to_json)
-          next
+        mutex.synchronize do
+          recent = boards[board][:rate_limits][client_id].select { |t| timestamp - t < 10 }
+          if recent.size >= 5
+            ws.send({ text: 'You are sending messages too fast. Stop spamming.', type: 'rate_limit' }.to_json)
+            next
+          end
+          boards[board][:rate_limits][client_id] = recent << timestamp
         end
 
-        rate_limits[client_id] = messages << timestamp
-
-        # Sanitize input (lightweight)
         text = data['text'].to_s.strip[0..500]
         image = data['image'].to_s if data['image']
 
+        # Censor the text based on the banned words
+        censored_text = text.split(' ').map { |word| banned_words.include?(word.downcase) ? '*' * word.length : word }.join(' ')
+
         message = {
-          text: text.empty? ? nil : text,
+          text: censored_text.empty? ? nil : censored_text,
           image: image,
           timestamp: Time.now.strftime('%H:%M')
         }.compact
 
         mutex.synchronize do
-          message_history << message
-          message_history.shift if message_history.size > 30
+          boards[board][:history] << message
+          boards[board][:history].shift if boards[board][:history].size > 30
+          boards[board][:connections].each { |conn| conn.send(message.to_json) }
         end
-
-        connections.each { |conn| conn.send(message.to_json) }
       rescue => e
         puts "Error: #{e.message}"
       end
@@ -82,13 +85,11 @@ get '/ws' do
 
     ws.on :close do |_|
       mutex.synchronize do
-        connections.delete(ws)
-        rate_limits.delete(client_id)
+        boards[board][:connections].delete(ws)
+        boards[board][:rate_limits].delete(client_id)
       end
-      ws = nil
     end
 
-    # Return async Rack response
     ws.rack_response
   else
     halt 400, 'WebSocket only'
