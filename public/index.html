@@ -14,13 +14,21 @@
       height: 100vh;
       justify-content: space-between;
     }
-    header {
-      background-color: #993bd8;
-      color: #ffffff;
-      padding: 15px 30px;
-      font-size: 24px;
-      text-align: center;
+    nav {
+      background-color: #1748e9;
+      padding: 10px 0;
+      display: flex; 
+      justify-content: center;
+      gap: 20px;
+    }
+    nav a {
+      color: white;
+      text-decoration: none;
+      font-size: 18px;
       font-weight: bold;
+    }
+    nav a:hover {
+      text-decoration: underline;
     }
     #chat {
       flex: 1;
@@ -63,7 +71,7 @@
       gap: 10px;
       align-items: center;
     }
-    input[type="text"] {
+    input[type="text" ] {
       flex: 1;
       padding: 10px;
       border: 1px solid #ddd;
@@ -76,14 +84,14 @@
     }
     button {
       padding: 10px 20px;
-      color: white;
+      background-color: #dde932;
       border: black solid 1px;
       border-radius: 6px; 
       font-size: 16px;
       cursor: pointer;
     }
     button:hover {
-      background-color: #993bd8;
+      background-color: #ffffff;
     }
     @media (max-width: 768px) {
       form {
@@ -103,18 +111,47 @@
   </style>
 </head>
 <body>
-  <header>Channel 0-0 Alpha Test</header>  
+  <!-- Board Navigation -->
+  <nav id="boardNav"></nav>
+
   <div id="chat"></div>
+
   <form id="messageForm">
     <div class="left-controls">
-      <input type="text" id="textInput" placeholder="Text here..." />
+      <input type="text" id="textInput" placeholder="Text here..." autocomplete="off"/>
       <button type="submit">⬆️</button>
     </div>
     <input type="file" id="imageInput" accept="image/*" />
   </form>
 
   <script>
-    const socket = new WebSocket(`ws://${location.host}/ws`);
+    // Dynamically generate board links based on the available boards
+    const boards = ['all', 'chat', 'memes', 'news'];  // Add new boards to this list
+    const boardNav = document.getElementById('boardNav');
+    
+    boards.forEach(board => {
+      const boardLink = document.createElement('a');
+      boardLink.href = `/${board}`;
+      boardLink.textContent = `/${board}/`;
+      boardNav.appendChild(boardLink);
+    });
+
+    // Example banned words list (ensure this matches the server-side)
+    const bannedWords = ['badword1', 'badword2', 'offensive', 'profanity']; 
+
+    // Function to censor words on the client side
+    function censorText(text) {
+      console.log("Original Text: ", text);
+      return text.split(' ').map(word => {
+        if (bannedWords.includes(word.toLowerCase())) {
+          console.log(`Censored word: ${word}`);
+          return '*'.repeat(word.length); // Replace with asterisks
+        }
+        return word;
+      }).join(' ');
+    }
+
+    const socket = new WebSocket(`ws://${location.host}/ws${window.location.pathname}`);
     const chat = document.getElementById('chat');
     const form = document.getElementById('messageForm');
     const textInput = document.getElementById('textInput');
@@ -178,11 +215,16 @@
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const message = textInput.value.trim();
+      let message = textInput.value.trim();
       const file = imageInput.files[0];
       const timestamp = getTimestamp();
 
       if (!message && !file) return;
+
+      // Censor the text before sending
+      message = censorText(message);
+
+      console.log("Censored Message: ", message);
 
       if (file) {
         const reader = new FileReader();
