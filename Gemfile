@@ -1,6 +1,6 @@
 source 'https://rubygems.org'
 
-ruby '3.1.0'  # Specify the Ruby version you're using (adjust as needed)
+ruby '3.3.8'  # Specify the Ruby version you're using (adjust as needed)
 
 # Sinatra for your web server
 gem 'sinatra', '~> 3.0'
