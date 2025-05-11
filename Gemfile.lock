@@ -67,7 +67,7 @@ DEPENDENCIES
   json (~> 2.6)
   puma (~> 5.0)
   rerun (~> 0.13)
-  sinatra (~> 3.2.0)
+  sinatra (~> 3.2)
 
 RUBY VERSION
    ruby 3.3.8p144
