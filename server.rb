@@ -41,7 +41,7 @@ get '/login' do
     </head>
     <body>
       <form method="POST" action="/login">
-        <h2>Enter your email</h2>
+        <h2>Enter your school email</h2>
         <input type="email" name="email" placeholder="you@stuff.thing" required />
         <button type="submit">Enter</button>
       </form>
