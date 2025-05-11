@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/0-0"
+    "url": "https://github.com/Psycho-Error/0-0"
   },
   "boards": ["all", "chat", "memes", "news", "free"],
   "features": {
