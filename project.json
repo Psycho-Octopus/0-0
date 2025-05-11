@@ -1,0 +1,30 @@
+{
+  "name": "0-0",
+  "version": "1.0.0",
+  "description": "A lightweight, board-based chat platform with real-time messaging.",
+  "author": "Psycho Octopus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/0-0"
+  },
+  "boards": ["all", "chat", "memes", "news", "free"],
+  "features": {
+    "realtime_messaging": true,
+    "image_uploads": ["all", "chat", "memes", "news", "free"],
+    "active_user_tracking": true,
+    "message_history": 30,
+    "bad_word_filter": true
+  },
+  "server": {
+    "framework": "Sinatra",
+    "websocket": "Faye::WebSocket",
+    "language": "Ruby"
+  },
+  "client": {
+    "theme": "dark",
+    "responsive": true,
+    "custom_logo": "0-0 top right",
+    "terms_link": "/TermsOfService"
+  }
+}
