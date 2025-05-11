@@ -1,4 +1,3 @@
-# server.rb
 require 'sinatra'
 require 'faye/websocket'
 require 'json'
@@ -6,92 +5,135 @@ require 'thread'
 require 'set'
 require 'securerandom'
 
+enable :sessions
+
 set :public_folder, File.dirname(__FILE__) + '/public'
 
-# List of boards, add or remove board names from this array as needed
-BOARDS = ['all', 'chat', 'memes', 'news']
+#boards are right here, dont overdo it
+BOARDS = ['all', 'chat', 'memes', 'news', 'free']
+$board_state = Hash.new { |h, k| h[k] = { conns: [], history: [], throttle: {} } }
+$mutex = Mutex.new
+$banned = File.read('bannedWords.txt').split("\n").map(&:strip)
 
-# Structure: { board_name => { connections: [], history: [], rate_limits: {} } }
-boards = Hash.new { |h, k| h[k] = { connections: [], history: [], rate_limits: {} } }
-mutex = Mutex.new
+helpers do
+  def logged_in?
+    session[:email] && session[:email].end_with?('@edtools.psd401.net')
+  end
+end
 
-# Read banned words from bannedWords.txt into an array
-banned_words = File.read('bannedWords.txt').split("\n").map(&:strip)
-
-# Default redirect to the first board (e.g., /b)
 get '/' do
+  redirect '/login' unless logged_in?
   redirect "/#{BOARDS.first}"
 end
 
-# Serve index.html for any board path (e.g., /b, /soy, /a)
-get '/:board' do |board|
-  if BOARDS.include?(board)
+get '/login' do
+  <<~HTML
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Login</title>
+      <style>
+        body { background: #111; color: #eee; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        form { background: #222; padding: 2rem; border-radius: 10px; }
+        input { padding: 0.5rem; width: 100%; margin-top: 1rem; }
+        button { margin-top: 1rem; padding: 0.5rem 1rem; }
+      </style>
+    </head>
+    <body>
+      <form method="POST" action="/login">
+        <h2>Enter your email</h2>
+        <input type="email" name="email" placeholder="you@stuff.thing" required />
+        <button type="submit">Enter</button>
+      </form>
+    </body>
+    </html>
+  HTML
+end
+
+post '/login' do
+  email = params[:email].to_s.strip.downcase
+  if email.end_with?('@edtools.psd401.net')
+    session[:email] = email
+    redirect "/#{BOARDS.first}"
+  else
+    halt 403, "Halt 404: The website you have attempted to visit does not exist. :("
+  end
+end
+
+get '/:board' do |board_name|
+  redirect '/login' unless logged_in?
+  if BOARDS.include?(board_name)
     send_file File.join(settings.public_folder, 'index.html')
   else
     halt 404, "Board not found"
   end
 end
 
-# WebSocket endpoint for a specific board
-get '/ws/:board' do |board|
-  if BOARDS.include?(board) && Faye::WebSocket.websocket?(env)
+get '/ws/:board' do |board_name|
+  halt 403 unless logged_in?
+
+  if BOARDS.include?(board_name) && Faye::WebSocket.websocket?(env)
     ws = Faye::WebSocket.new(env)
-    client_id = SecureRandom.hex(8)
+    uid = SecureRandom.hex(8)
 
-    mutex.synchronize do
-      boards[board][:connections] << ws
-      boards[board][:rate_limits][client_id] = []
+    $mutex.synchronize do
+      $board_state[board_name][:conns] << ws
+      $board_state[board_name][:throttle][uid] = []
     end
 
-    ws.on :open do |_|
-      ws.send(boards[board][:history].to_json)
+    ws.on :open do |_evt|
+      ws.send({ type: 'active_users', count: $board_state[board_name][:conns].size }.to_json)
+      ws.send({ type: 'history', messages: $board_state[board_name][:history] }.to_json)
     end
 
-    ws.on :message do |event|
+    ws.on :message do |packet|
       begin
-        data = JSON.parse(event.data)
-        timestamp = Time.now.to_i
+        payload = JSON.parse(packet.data)
+        now = Time.now.to_i
 
-        mutex.synchronize do
-          recent = boards[board][:rate_limits][client_id].select { |t| timestamp - t < 10 }
+        $mutex.synchronize do
+          recent = $board_state[board_name][:throttle][uid].select { |t| now - t < 10 }
           if recent.size >= 5
-            ws.send({ text: 'You are sending messages too fast. Stop spamming.', type: 'rate_limit' }.to_json)
+            ws.send({ type: 'rate_limit', text: 'You are sending messages too fast.' }.to_json)
             next
           end
-          boards[board][:rate_limits][client_id] = recent << timestamp
+          $board_state[board_name][:throttle][uid] = recent << now
         end
 
-        text = data['text'].to_s.strip[0..500]
-        image = data['image'].to_s if data['image']
+        raw_msg = payload['text'].to_s.strip[0..500]
+        maybe_image = payload['image'].to_s if payload['image']
 
-        # Censor the text based on the banned words
-        censored_text = text.split(' ').map { |word| banned_words.include?(word.downcase) ? '*' * word.length : word }.join(' ')
+        clean_msg = raw_msg.gsub(/\b\w+\b/) do |w|
+          $banned.include?(w.downcase) ? '*' * w.length : w
+        end
 
-        message = {
-          text: censored_text.empty? ? nil : censored_text,
-          image: image,
+        msg_to_broadcast = {
+          text: clean_msg.empty? ? nil : clean_msg,
+          image: maybe_image,
           timestamp: Time.now.strftime('%H:%M')
         }.compact
 
-        mutex.synchronize do
-          boards[board][:history] << message
-          boards[board][:history].shift if boards[board][:history].size > 30
-          boards[board][:connections].each { |conn| conn.send(message.to_json) }
+        $mutex.synchronize do
+          $board_state[board_name][:history] << msg_to_broadcast
+          $board_state[board_name][:history].shift while $board_state[board_name][:history].size > 30
+
+          $board_state[board_name][:conns].each do |conn|
+            conn.send(msg_to_broadcast.to_json)
+          end
         end
       rescue => e
-        puts "Error: #{e.message}"
+        puts "Error processing message: #{e}"
       end
     end
 
-    ws.on :close do |_|
-      mutex.synchronize do
-        boards[board][:connections].delete(ws)
-        boards[board][:rate_limits].delete(client_id)
+    ws.on :close do |_evt|
+      $mutex.synchronize do
+        $board_state[board_name][:conns].delete(ws)
       end
     end
 
     ws.rack_response
   else
-    halt 400, 'WebSocket only'
+    halt 404, "WebSocket not allowed"
   end
 end
