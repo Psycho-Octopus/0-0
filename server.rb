@@ -54,11 +54,18 @@ post '/login' do
   email = params[:email].to_s.strip.downcase
   if email.end_with?('@edtools.psd401.net')
     session[:email] = email
+
+    emails = File.exist?('emails.txt') ? File.read('emails.txt').split("\n") : []
+    unless emails.include?(email)
+      File.open('emails.txt', 'a') { |file| file.puts(email) }
+    end
+
     redirect "/#{BOARDS.first}"
   else
-    halt 403, "Halt 404: The website you have attempted to visit does not exist. :("
+    halt 403, "Uh oh, looks like you do not have access to this web service. :("
   end
 end
+
 
 get '/:board' do |board_name|
   redirect '/login' unless logged_in?
