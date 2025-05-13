@@ -4,9 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Channel 0-0</title>
-</head>
-<body>
-  <style>* { margin: 0; padding: 0; box-sizing: border-box; }
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -157,7 +156,9 @@
         width: 100%;
       }
     }
-    </style>
+  </style>
+</head>
+<body>
 
   <div id="logo">0-0</div>
   <div id="activeUsers" class="active-users">Active Users: 0</div>
@@ -170,70 +171,70 @@
     <input type="file" id="imageUpload" accept="image/*" />
   </form>
 
-  <!-- TOS Message -->
   <div class="tos-message">
     <p>By chatting, you agree to our <a href="/TermsOfService.html" target="_blank">Terms of Service</a>.</p>
   </div>
 
   <script>
-  const boards = ['all', 'chat', 'memes', 'news'];
+    const boards = ['all', 'chat', 'memes', 'news'];
     const boardNav = document.getElementById('boardNav');
-    
     boards.forEach((bName) => {
       let link = document.createElement('a');
       link.href = `/${bName}`;
       link.textContent = `/${bName}/`;
       boardNav.appendChild(link);
     });
-    
+
     const naughtyWords = ['badword1', 'badword2', 'offensive', 'profanity'];
     function filterBadWords(text) {
       return text.split(' ').map(w =>
         naughtyWords.includes(w.toLowerCase()) ? '*'.repeat(w.length) : w
       ).join(' ');
     }
+
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${protocol}://${location.host}/ws${window.location.pathname}`);
     
-    const socket = new WebSocket(`ws://${location.host}/ws${window.location.pathname}`);
     const chatLog = document.getElementById('chat');
     const form = document.getElementById('messageForm');
     const textBox = document.getElementById('textBox');
     const imageUpload = document.getElementById('imageUpload');
     const userCountDisplay = document.getElementById('activeUsers');
-    
+
     function currentTime() {
       const now = new Date();
       return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
-    
+
     function showMessage(payload) {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'message';
-    
+
       if (payload.image) {
         let img = document.createElement('img');
         img.src = payload.image;
         msgDiv.appendChild(img);
       }
-    
+
       const msgWrapper = document.createElement('div');
       msgWrapper.className = 'text';
-    
+
       if (payload.text) {
         const p = document.createElement('p');
         p.textContent = payload.text;
         msgWrapper.appendChild(p);
       }
-    
+
       const time = document.createElement('span');
       time.className = 'timestamp';
       time.textContent = payload.timestamp || currentTime();
       msgWrapper.appendChild(time);
-    
+
       msgDiv.appendChild(msgWrapper);
       chatLog.appendChild(msgDiv);
       chatLog.scrollTop = chatLog.scrollHeight;
     }
-    
+
     socket.addEventListener('message', (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -248,20 +249,20 @@
         console.error("Error parsing message", err);
       }
     });
-    
+
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-    
+
       let rawText = textBox.value.trim();
       let file = imageUpload.files[0];
       if (!rawText && !file) return;
-    
+
       let cleanText = filterBadWords(rawText);
       let payload = {
         text: cleanText,
         timestamp: currentTime()
       };
-    
+
       if (file) {
         const reader = new FileReader();
         reader.onload = function () {
@@ -272,10 +273,10 @@
       } else {
         socket.send(JSON.stringify(payload));
       }
-    
+
       textBox.value = '';
       imageUpload.value = '';
     });
-    </script>
+  </script>
 </body>
 </html>
