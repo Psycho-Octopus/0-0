@@ -144,3 +144,8 @@ get '/ws/:board' do |board_name|
     halt 404, "WebSocket not allowed"
   end
 end
+
+get '/chroma'
+  send_file File.join(settings.public_folder, 'chroma.html'
+    end
+end
