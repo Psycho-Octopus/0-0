@@ -148,6 +148,3 @@ end
 get '/chroma'
 	send_file File.join(settings.public_folder, 'chroma.html'
 end
-
-get '/hello'
- <<~html
