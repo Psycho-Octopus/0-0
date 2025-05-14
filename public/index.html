@@ -91,6 +91,12 @@
       margin-top: 4px;
     }
 
+    .username {
+      font-weight: bold;
+      margin-right: 10px;
+      color: #BB86FC;
+    }
+
     .active-users {
       position: fixed;
       top: 10px;
@@ -172,7 +178,7 @@
   <div id="activeUsers" class="active-users">Active Users: 0</div>
   <nav id="boardNav"></nav>
   <div id="chat"></div>
-  <div id="version">V. 1.0.5</div>
+  <div id="version">V. 1.1.4</div>
 
   <form id="messageForm">
     <input type="text" id="textBox" placeholder="Say something..." />
@@ -210,6 +216,8 @@
     const imageUpload = document.getElementById('imageUpload');
     const userCountDisplay = document.getElementById('activeUsers');
 
+    let username = ''; // Store logged-in user's username
+
     function currentTime() {
       const now = new Date();
       return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -218,6 +226,12 @@
     function showMessage(payload) {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'message';
+
+      // Show the username
+      const usernameDiv = document.createElement('div');
+      usernameDiv.className = 'username';
+      usernameDiv.textContent = payload.username; // Display the username
+      msgDiv.appendChild(usernameDiv);
 
       if (payload.image) {
         let img = document.createElement('img');
@@ -269,7 +283,8 @@
       let cleanText = filterBadWords(rawText);
       let payload = {
         text: cleanText,
-        timestamp: currentTime()
+        timestamp: currentTime(),
+        username: username // Send the logged-in user's username with the message
       };
 
       if (file) {
@@ -286,6 +301,9 @@
       textBox.value = '';
       imageUpload.value = '';
     });
+
+    // Simulate username being passed from the server to the frontend (you would get this info from the server)
+    username = 'anon1'; // This should be dynamically set based on the logged-in user
   </script>
 </body>
 </html>
