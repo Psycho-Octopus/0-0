@@ -6,18 +6,27 @@ require 'set'
 require 'securerandom'
 
 enable :sessions
-
 set :public_folder, File.dirname(__FILE__) + '/public'
 
-#boards are right here, dont overdo it
 BOARDS = ['all', 'chat', 'memes', 'news', 'free']
 $board_state = Hash.new { |h, k| h[k] = { conns: [], history: [], throttle: {} } }
 $mutex = Mutex.new
 $banned = File.read('bannedWords.txt').split("\n").map(&:strip)
 
+# Adjective-Animal anonymized name generator
+ADJECTIVES = %w[Brave Clever Calm Swift Silent Lucky Happy Fierce Bright Cool Quiet Noble]
+ANIMALS = %w[Fox Tiger Panda Owl Wolf Cat Bear Hawk Falcon Whale Lion Cheetah Rabbit Koala]
+$anon_names = {} # email => anon name
+
 helpers do
   def logged_in?
     session[:email] && session[:email].end_with?('@edtools.psd401.net')
+  end
+
+  def anon_name_for(email)
+    $anon_names[email] ||= begin
+      "#{ADJECTIVES.sample}#{ANIMALS.sample}"
+    end
   end
 end
 
@@ -41,8 +50,8 @@ get '/login' do
     </head>
     <body>
       <form method="POST" action="/login">
-        <h2>Please login or create an account</h2>
-        <input type="email" name="email" placeholder="you@stuff.thing" required />
+        <h2>Please login with your school email</h2>
+        <input type="email" name="email" placeholder="you@edtools.psd401.net" required />
         <button type="submit">Enter</button>
       </form>
     </body>
@@ -50,16 +59,17 @@ get '/login' do
   HTML
 end
 
+def generate_username
+  adjectives = ['quick', 'lazy', 'bright', 'shiny', 'silent']
+  animals = ['fox', 'dog', 'cat', 'elephant', 'eagle']
+  "#{adjectives.sample}-#{animals.sample}"
+end
+
 post '/login' do
   email = params[:email].to_s.strip.downcase
   if email.end_with?('@edtools.psd401.net')
     session[:email] = email
-
-    emails = File.exist?('emails.txt') ? File.read('emails.txt').split("\n") : []
-    unless emails.include?(email)
-      File.open('emails.txt', 'a') { |file| file.puts(email) }
-    end
-
+    session[:username] = generate_username  # Store the username in the session
     redirect "/#{BOARDS.first}"
   else
     halt 403, "Uh oh, looks like you do not have access to this web service. :("
@@ -82,6 +92,8 @@ get '/ws/:board' do |board_name|
   if BOARDS.include?(board_name) && Faye::WebSocket.websocket?(env)
     ws = Faye::WebSocket.new(env)
     uid = SecureRandom.hex(8)
+    email = session[:email]
+    anon_name = anon_name_for(email)
 
     $mutex.synchronize do
       $board_state[board_name][:conns] << ws
@@ -115,6 +127,7 @@ get '/ws/:board' do |board_name|
         end
 
         msg_to_broadcast = {
+          username: anon_name,
           text: clean_msg.empty? ? nil : clean_msg,
           image: maybe_image,
           timestamp: Time.now.strftime('%H:%M')
@@ -146,5 +159,5 @@ get '/ws/:board' do |board_name|
 end
 
 get '/chroma' do
-	send_file File.join(settings.public_folder, 'chroma.html')
+  send_file File.join(settings.public_folder, 'chroma.html')
 end
