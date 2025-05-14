@@ -145,6 +145,6 @@ get '/ws/:board' do |board_name|
   end
 end
 
-get '/chroma'
-	send_file File.join(settings.public_folder, 'chroma.html'
+get '/chroma' do
+	send_file File.join(settings.public_folder, 'chroma.html')
 end
