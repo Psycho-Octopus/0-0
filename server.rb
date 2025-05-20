@@ -8,10 +8,12 @@ require 'securerandom'
 enable :sessions
 set :public_folder, File.dirname(__FILE__) + '/public'
 
-BOARDS = ['all', 'chat', 'memes', 'news', 'free']
-$board_state = Hash.new { |h, k| h[k] = { conns: [], history: [], throttle: {} } }
+$connections = []
+$history = []
+$throttle = {}
 $mutex = Mutex.new
 $banned = File.read('bannedWords.txt').split("\n").map(&:strip)
+$reactions = {} # message_id => {likes: Set, dislikes: Set, pooped: bool}
 
 # Adjective-Animal anonymized name generator
 ADJECTIVES = %w[Brave Clever Calm Swift Silent Lucky Happy Fierce Bright Cool Quiet Noble]
@@ -32,7 +34,7 @@ end
 
 get '/' do
   redirect '/login' unless logged_in?
-  redirect "/#{BOARDS.first}"
+  send_file File.join(settings.public_folder, 'index.html')
 end
 
 get '/login' do
@@ -50,8 +52,8 @@ get '/login' do
     </head>
     <body>
       <form method="POST" action="/login">
-        <h2>Please login with your school email</h2>
-        <input type="email" name="email" placeholder="you@edtools.psd401.net" required />
+        <h2>Please login with your email</h2>
+        <input type="email" name="email" placeholder="you@stuff.thing" required />
         <button type="submit">Enter</button>
       </form>
     </body>
@@ -70,39 +72,43 @@ post '/login' do
   if email.end_with?('@edtools.psd401.net')
     session[:email] = email
     session[:username] = generate_username  # Store the username in the session
-    redirect "/#{BOARDS.first}"
+    redirect "/"
   else
     halt 403, "Uh oh, looks like you do not have access to this web service. :("
   end
 end
 
-
-get '/:board' do |board_name|
-  redirect '/login' unless logged_in?
-  if BOARDS.include?(board_name)
-    send_file File.join(settings.public_folder, 'index.html')
-  else
-    halt 404, "Board not found"
-  end
+get '/chrome' do
+  send_file File.join(settings.public_folder, 'chroma.html')
 end
 
-get '/ws/:board' do |board_name|
+get '/ws' do
   halt 403 unless logged_in?
 
-  if BOARDS.include?(board_name) && Faye::WebSocket.websocket?(env)
+  if Faye::WebSocket.websocket?(env)
     ws = Faye::WebSocket.new(env)
     uid = SecureRandom.hex(8)
     email = session[:email]
     anon_name = anon_name_for(email)
 
     $mutex.synchronize do
-      $board_state[board_name][:conns] << ws
-      $board_state[board_name][:throttle][uid] = []
+      $connections << ws
+      $throttle[uid] = []
     end
 
     ws.on :open do |_evt|
-      ws.send({ type: 'active_users', count: $board_state[board_name][:conns].size }.to_json)
-      ws.send({ type: 'history', messages: $board_state[board_name][:history] }.to_json)
+      ws.send({ type: 'active_users', count: $connections.size }.to_json)
+      # Send history with message ids and reaction counts
+      history_with_ids = $history.map do |msg|
+        msg = msg.dup
+        msg[:id] ||= generate_message_id(msg)
+        react = $reactions[msg[:id]] || { likes: Set.new, dislikes: Set.new, pooped: false }
+        msg[:likes] = react[:likes].size
+        msg[:dislikes] = react[:dislikes].size
+        msg[:pooped] = react[:pooped]
+        msg
+      end
+      ws.send({ type: 'history', messages: history_with_ids }.to_json)
     end
 
     ws.on :message do |packet|
@@ -110,13 +116,52 @@ get '/ws/:board' do |board_name|
         payload = JSON.parse(packet.data)
         now = Time.now.to_i
 
+        if payload['type'] == 'reaction'
+          msg_id = payload['id']
+          reaction = payload['reaction']
+          $mutex.synchronize do
+            $reactions[msg_id] ||= { likes: Set.new, dislikes: Set.new, pooped: false }
+            react = $reactions[msg_id]
+            # Use uid to prevent multiple likes/dislikes from same user
+            if reaction == 'like'
+              react[:likes] << uid
+              react[:dislikes].delete(uid)
+            elsif reaction == 'dislike'
+              react[:dislikes] << uid
+              react[:likes].delete(uid)
+              if react[:dislikes].size >= 2
+                react[:pooped] = true
+                # Find and update message in $history
+                $history.each do |msg|
+                  if (msg[:id] || generate_message_id(msg)) == msg_id
+                    msg[:pooped] = true
+                    msg[:text] = 'pooped to death'
+                    msg.delete(:image)
+                  end
+                end
+              end
+            end
+            # Broadcast reaction update
+            $connections.each do |conn|
+              conn.send({
+                type: 'reaction_update',
+                id: msg_id,
+                likes: react[:likes].size,
+                dislikes: react[:dislikes].size,
+                pooped: react[:pooped]
+              }.to_json)
+            end
+          end
+          next
+        end
+
         $mutex.synchronize do
-          recent = $board_state[board_name][:throttle][uid].select { |t| now - t < 10 }
-          if recent.size >= 5
+          recent = $throttle[uid].select { |t| now - t < 10 }
+          if recent.size >= 2
             ws.send({ type: 'rate_limit', text: 'You are sending messages too fast.' }.to_json)
             next
           end
-          $board_state[board_name][:throttle][uid] = recent << now
+          $throttle[uid] = recent << now
         end
 
         raw_msg = payload['text'].to_s.strip[0..500]
@@ -133,11 +178,14 @@ get '/ws/:board' do |board_name|
           timestamp: Time.now.strftime('%H:%M')
         }.compact
 
+        # Assign a message id for reactions
+        msg_to_broadcast[:id] = generate_message_id(msg_to_broadcast)
         $mutex.synchronize do
-          $board_state[board_name][:history] << msg_to_broadcast
-          $board_state[board_name][:history].shift while $board_state[board_name][:history].size > 30
+          $history << msg_to_broadcast
+          $history.shift while $history.size > 30
+          $reactions[msg_to_broadcast[:id]] ||= { likes: Set.new, dislikes: Set.new, pooped: false }
 
-          $board_state[board_name][:conns].each do |conn|
+          $connections.each do |conn|
             conn.send(msg_to_broadcast.to_json)
           end
         end
@@ -148,7 +196,7 @@ get '/ws/:board' do |board_name|
 
     ws.on :close do |_evt|
       $mutex.synchronize do
-        $board_state[board_name][:conns].delete(ws)
+        $connections.delete(ws)
       end
     end
 
@@ -158,6 +206,16 @@ get '/ws/:board' do |board_name|
   end
 end
 
+# Helper to generate a message id (should match frontend)
+def generate_message_id(msg)
+  [
+    msg[:timestamp] || '',
+    msg[:username] || '',
+    msg[:text] || '',
+    (msg[:image] ? msg[:image][0..10] : '')
+  ].join('_')
+end
+
 get '/chroma' do
-  send_file File.join(settings.public_folder, 'chroma.html')
+  redirect '/chrome'
 end
