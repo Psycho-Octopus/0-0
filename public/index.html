@@ -29,6 +29,15 @@
       z-index: 1000;
       box-shadow: 0 0 8px #BB86FC;
     }
+        #easter {
+      position: fixed;
+      top: 10px;
+      right: 15px;
+      font-size: 36px;
+      font-weight: bold;
+      color: #BB86FC;
+      background-color: rgba(0, 0, 0, 0.6);
+    }
 
     #version{
       position: fixed;
@@ -248,10 +257,11 @@
 <body>
 
   <div id="logo">0-0</div>
+  <button id="easter"></button>
   <div id="activeUsers" class="active-users">Active Users: 0</div>
   <!-- Remove boardNav and board links -->
   <div id="chat"></div>
-  <div id="version">V. 1.1.4</div>
+  <div id="version">V. 1.9.2</div>
 
   <form id="messageForm" autocomplete="off">
     <input type="text" id="textBox" placeholder="Type your message and press Enter..." autocomplete="off" />
@@ -455,6 +465,17 @@
     socket.addEventListener('message', (e) => {
       try {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'disable_tab') {
+          // Disable chat UI but do not close the tab
+          document.body.innerHTML = `
+            <div style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;">
+              <h2 style="color:#BB86FC;">This tab has been disabled</h2>
+              <p style="color:#eee;">Another tab is already open for this account.<br>Close this tab or refresh to try again.</p>
+            </div>
+          `;
+          socket.close();
+          return;
+        }
         if (msg.type === 'rate_limit') {
           throttled = true;
           if (sendBtn) {
