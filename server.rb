@@ -14,6 +14,7 @@ $throttle = {}
 $mutex = Mutex.new
 $banned = File.read('bannedWords.txt').split("\n").map(&:strip)
 $reactions = {} # message_id => {likes: Set, dislikes: Set, pooped: bool}
+$active_sessions = {} # email => ws_uid
 
 # Adjective-Animal anonymized name generator
 ADJECTIVES = %w[Brave Clever Calm Swift Silent Lucky Happy Fierce Bright Cool Quiet Noble]
@@ -38,6 +39,7 @@ get '/' do
 end
 
 get '/login' do
+  # Show email entry form only, no captcha
   <<~HTML
     <!DOCTYPE html>
     <html>
@@ -92,8 +94,22 @@ get '/ws' do
     anon_name = anon_name_for(email)
 
     $mutex.synchronize do
+      # If this email already has an active session, notify the old one and remove it
+      if $active_sessions[email]
+        old_uid = $active_sessions[email]
+        $connections.each do |conn|
+          if conn.instance_variable_defined?(:@ws_uid) && conn.instance_variable_get(:@ws_uid) == old_uid
+            begin
+              conn.send({ type: 'disable_tab', reason: 'Another tab was opened for this account.' }.to_json)
+            rescue
+            end
+          end
+        end
+      end
+      $active_sessions[email] = uid
       $connections << ws
       $throttle[uid] = []
+      ws.instance_variable_set(:@ws_uid, uid)
     end
 
     ws.on :open do |_evt|
@@ -197,6 +213,10 @@ get '/ws' do
     ws.on :close do |_evt|
       $mutex.synchronize do
         $connections.delete(ws)
+        # Remove from active_sessions if this was the active tab
+        if $active_sessions[email] == uid
+          $active_sessions.delete(email)
+        end
       end
     end
 
