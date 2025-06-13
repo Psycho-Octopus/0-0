@@ -1,7 +1,4 @@
 window.addEventListener('DOMContentLoaded', function() {
-      alert('Please be appropriate and consider what you are sending before submiting your message.');
-
-      // Email validation for login page
       const emailInput = document.querySelector('input[type="email"]');
       if (emailInput) {
         emailInput.addEventListener('input', function() {
